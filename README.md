@@ -53,6 +53,8 @@ On macOS the menu bar item combines the quota-colored light with the current
 5-hour remaining percentage. The popup's title bar is draggable, and its X
 hides it back to the tray. A Rust background task refreshes the tray every five
 minutes even while the popup is hidden, and sends fresh values back to the UI.
+The interval can be changed in the popup to 1, 5, 10, 15, 30, or 60 minutes and
+is retained across restarts.
 
 ```bash
 npm install

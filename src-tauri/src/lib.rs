@@ -1,31 +1,56 @@
 #[path = "../../src/codex/mod.rs"]
 mod codex;
 
-use std::{path::PathBuf, sync::Arc, time::Duration};
-use tokio::sync::Mutex;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
+use tokio::sync::{Mutex, Notify};
 
 use codex::{resolve_codex_home, CodexUsage, UsageError, UsageService};
+use serde::{Deserialize, Serialize};
 use tauri::{
     image::Image,
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, WebviewWindow, WindowEvent,
+    AppHandle, Emitter, Manager, State, WebviewWindow, WindowEvent,
 };
 
-const BACKGROUND_REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
+const DEFAULT_REFRESH_INTERVAL_MINUTES: u64 = 5;
+const REFRESH_INTERVAL_OPTIONS: [u64; 6] = [1, 5, 10, 15, 30, 60];
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppSettings {
+    refresh_interval_minutes: u64,
+}
 
 struct AppState {
     codex_home: PathBuf,
     refresh_lock: Arc<Mutex<()>>,
+    refresh_interval_minutes: AtomicU64,
+    refresh_schedule_changed: Arc<Notify>,
+    settings_path: PathBuf,
 }
 
 pub fn run() {
+    let settings_path = settings_path();
+    let refresh_interval_minutes = load_refresh_interval(&settings_path);
+
     tauri::Builder::default()
         .manage(AppState {
             codex_home: resolve_codex_home().unwrap_or_else(|_| {
                 dirs::home_dir().map(|home| home.join(".codex")).unwrap_or_else(|| PathBuf::from(".codex"))
             }),
             refresh_lock: Arc::new(Mutex::new(())),
+            refresh_interval_minutes: AtomicU64::new(refresh_interval_minutes),
+            refresh_schedule_changed: Arc::new(Notify::new()),
+            settings_path,
         })
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -69,7 +94,12 @@ pub fn run() {
             start_background_refresh(app.handle().clone());
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_codex_usage, refresh_codex_usage])
+        .invoke_handler(tauri::generate_handler![
+            get_codex_usage,
+            refresh_codex_usage,
+            get_refresh_interval_minutes,
+            set_refresh_interval_minutes
+        ])
         .run(tauri::generate_context!())
         .expect("error while running CodexLight");
 }
@@ -105,9 +135,38 @@ fn start_background_refresh(app: AppHandle) {
             if let Err(error) = refresh_from_app(&app).await {
                 eprintln!("CodexLight background refresh failed: {error}");
             }
-            tokio::time::sleep(BACKGROUND_REFRESH_INTERVAL).await;
+
+            let (minutes, schedule_changed) = {
+                let state = app.state::<AppState>();
+                (
+                    state.refresh_interval_minutes.load(Ordering::Relaxed),
+                    state.refresh_schedule_changed.clone(),
+                )
+            };
+
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_secs(minutes * 60)) => {}
+                _ = schedule_changed.notified() => {}
+            }
         }
     });
+}
+
+#[tauri::command]
+fn get_refresh_interval_minutes(state: State<'_, AppState>) -> u64 {
+    state.refresh_interval_minutes.load(Ordering::Relaxed)
+}
+
+#[tauri::command]
+fn set_refresh_interval_minutes(minutes: u64, state: State<'_, AppState>) -> Result<u64, String> {
+    let minutes = validate_refresh_interval(minutes)
+        .ok_or_else(|| "Refresh interval must be 1, 5, 10, 15, 30, or 60 minutes".to_string())?;
+
+    save_refresh_interval(&state.settings_path, minutes)
+        .map_err(|error| format!("Unable to save refresh interval: {error}"))?;
+    state.refresh_interval_minutes.store(minutes, Ordering::Relaxed);
+    state.refresh_schedule_changed.notify_waiters();
+    Ok(minutes)
 }
 
 #[tauri::command]
@@ -164,4 +223,49 @@ fn tray_image(remaining: Option<u8>) -> Image<'static> {
         }
     }
     Image::new_owned(rgba, size as u32, size as u32)
+}
+
+fn settings_path() -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("CodexLight")
+        .join("settings.json")
+}
+
+fn load_refresh_interval(path: &Path) -> u64 {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|contents| serde_json::from_str::<AppSettings>(&contents).ok())
+        .and_then(|settings| validate_refresh_interval(settings.refresh_interval_minutes))
+        .unwrap_or(DEFAULT_REFRESH_INTERVAL_MINUTES)
+}
+
+fn save_refresh_interval(path: &Path, minutes: u64) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let contents = serde_json::to_string_pretty(&AppSettings {
+        refresh_interval_minutes: minutes,
+    })
+    .map_err(std::io::Error::other)?;
+    fs::write(path, contents)
+}
+
+fn validate_refresh_interval(minutes: u64) -> Option<u64> {
+    REFRESH_INTERVAL_OPTIONS.contains(&minutes).then_some(minutes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn refresh_interval_accepts_only_supported_options() {
+        for minutes in REFRESH_INTERVAL_OPTIONS {
+            assert_eq!(validate_refresh_interval(minutes), Some(minutes));
+        }
+        assert_eq!(validate_refresh_interval(0), None);
+        assert_eq!(validate_refresh_interval(2), None);
+        assert_eq!(validate_refresh_interval(120), None);
+    }
 }

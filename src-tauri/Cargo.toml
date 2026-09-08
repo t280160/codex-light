@@ -1,6 +1,6 @@
 [package]
 name = "codex-light-app"
-version = "0.1.1"
+version = "0.1.2"
 description = "A lightweight Codex quota traffic light"
 authors = ["CodexLight"]
 edition = "2021"

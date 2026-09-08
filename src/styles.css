@@ -21,7 +21,7 @@ button { font: inherit; }
   background: linear-gradient(145deg, #fbfcfd 0%, #eef2f5 100%);
 }
 
-.topbar, .brand-lockup, .quota-heading, .actions, .status-banner {
+.topbar, .brand-lockup, .quota-heading, .actions, .status-banner, .meta-row, .refresh-setting {
   display: flex;
   align-items: center;
 }
@@ -88,8 +88,23 @@ button { font: inherit; }
 .quota-heading { font-size: 13px; font-weight: 650; }
 .quota-heading strong { margin-left: auto; font-size: 17px; letter-spacing: -0.03em; }
 .quota-card p, .updated, .notice { margin: 6px 0 0; color: #778392; font-size: 11px; }
-.updated { margin-top: 4px; text-align: right; }
+.meta-row { min-height: 27px; justify-content: space-between; gap: 8px; }
+.meta-row .updated, .meta-row .notice { margin: 0; text-align: right; }
+.refresh-setting { flex: 0 0 auto; gap: 5px; color: #778392; font-size: 11px; }
+.refresh-setting select {
+  height: 27px;
+  padding: 0 6px;
+  border: 1px solid #d7dee6;
+  border-radius: 7px;
+  color: #455365;
+  background: rgba(255, 255, 255, 0.88);
+  font: inherit;
+  cursor: pointer;
+}
+.refresh-setting select:disabled { cursor: wait; opacity: 0.6; }
+.updated { text-align: right; }
 .notice { color: #a22e38; text-align: right; }
+.settings-error { margin: -4px 0 0; color: #a22e38; font-size: 10px; text-align: left; }
 
 .empty-state {
   display: grid;
