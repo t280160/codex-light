@@ -51,7 +51,8 @@ The Tauri desktop build provides the visible menu bar/tray experience:
 
 On macOS the menu bar item combines the quota-colored light with the current
 5-hour remaining percentage. The popup's title bar is draggable, and its X
-hides it back to the tray.
+hides it back to the tray. A Rust background task refreshes the tray every five
+minutes even while the popup is hidden, and sends fresh values back to the UI.
 
 ```bash
 npm install

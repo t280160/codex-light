@@ -1,7 +1,7 @@
 #[path = "../../src/codex/mod.rs"]
 mod codex;
 
-use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 
 use codex::{resolve_codex_home, CodexUsage, UsageError, UsageService};
@@ -9,8 +9,10 @@ use tauri::{
     image::Image,
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, WebviewWindow, WindowEvent,
+    AppHandle, Emitter, Manager, WebviewWindow, WindowEvent,
 };
+
+const BACKGROUND_REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 struct AppState {
     codex_home: PathBuf,
@@ -63,11 +65,8 @@ pub fn run() {
                 if show_on_launch {
                     show_popup(app.handle());
                 }
-                let handle = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    let _ = refresh_from_app(&handle).await;
-                });
             }
+            start_background_refresh(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![get_codex_usage, refresh_codex_usage])
@@ -93,6 +92,22 @@ fn show_popup(app: &AppHandle) {
         let _ = window.show();
         let _ = window.set_focus();
     }
+
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let _ = refresh_from_app(&handle).await;
+    });
+}
+
+fn start_background_refresh(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            if let Err(error) = refresh_from_app(&app).await {
+                eprintln!("CodexLight background refresh failed: {error}");
+            }
+            tokio::time::sleep(BACKGROUND_REFRESH_INTERVAL).await;
+        }
+    });
 }
 
 #[tauri::command]
@@ -116,6 +131,7 @@ async fn refresh_from_app(app: &AppHandle) -> Result<CodexUsage, String> {
         .await
         .map_err(|error: UsageError| error.user_message())?;
     update_tray(app, &usage);
+    let _ = app.emit("codex-usage-updated", usage.clone());
     Ok(usage)
 }
 

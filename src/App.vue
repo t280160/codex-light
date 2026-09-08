@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { invoke } from '@tauri-apps/api/core'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { CodexUsage } from './types'
 import { formatResetTime, formatUpdatedAt, getQuotaStatus, statusLabel } from './utils/quota'
 
@@ -10,7 +11,7 @@ const loading = ref(false)
 const error = ref<string | null>(null)
 const now = ref(Date.now())
 let ticker: number | undefined
-let refreshTicker: number | undefined
+let stopUsageListener: UnlistenFn | undefined
 
 const status = computed(() => getQuotaStatus(usage.value?.fiveHourRemaining))
 const statusText = computed(() => statusLabel(status.value))
@@ -36,17 +37,20 @@ function resetText(resetAt: number | null | undefined) {
   return formatResetTime(resetAt ?? null, now.value)
 }
 
-onMounted(() => {
+onMounted(async () => {
+  stopUsageListener = await listen<CodexUsage>('codex-usage-updated', (event) => {
+    usage.value = event.payload
+    error.value = null
+  })
   refresh()
   ticker = window.setInterval(() => {
     now.value = Date.now()
   }, 30_000)
-  refreshTicker = window.setInterval(refresh, 5 * 60_000)
 })
 
 onBeforeUnmount(() => {
   if (ticker) window.clearInterval(ticker)
-  if (refreshTicker) window.clearInterval(refreshTicker)
+  stopUsageListener?.()
 })
 </script>
 
